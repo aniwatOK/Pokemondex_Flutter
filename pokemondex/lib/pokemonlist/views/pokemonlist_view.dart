@@ -5,70 +5,113 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class PokemonList extends StatefulWidget {
-  const PokemonList({
-    super.key,
-  });
+  const PokemonList({super.key});
 
   @override
   State<PokemonList> createState() => _PokemonListState();
 }
 
 class _PokemonListState extends State<PokemonList> {
-  PokemonListResponse? _data;
-  late Future<List<PokemonListItem>> _list;
+  List<PokemonListItem> _pokemons = []; // เก็บรายชื่อ Pokémon ทั้งหมด
+  int _offset = 0; // ตำแหน่งเริ่มต้นสำหรับการโหลดข้อมูล
+  final int _limit = 100; // จำนวน Pokémon ที่โหลดต่อครั้ง
+  bool _isLoadingMore = false; // สถานะการโหลดเพิ่มเติม
+  bool _hasMore = true; // เช็คว่ามี Pokémon ให้โหลดเพิ่มอีกหรือไม่
 
   @override
   void initState() {
     super.initState();
-    _list = loadData();
+    loadData(); // โหลดข้อมูลครั้งแรก
   }
 
-  //load data
-  Future<List<PokemonListItem>> loadData() async {
-    //fetch data
-    final response =
-        await http.get(Uri.parse('https://pokeapi.co/api/v2/pokemon'));
+  // โหลดข้อมูล Pokémon จาก API
+  Future<void> loadData() async {
+    if (_isLoadingMore || !_hasMore)
+      return; // ถ้ากำลังโหลด หรือ ไม่มีข้อมูลเพิ่ม หยุดการทำงาน
+
+    setState(() {
+      _isLoadingMore = true; // กำลังโหลดข้อมูล
+    });
+
+    final response = await http.get(
+      Uri.parse(
+          'https://pokeapi.co/api/v2/pokemon?offset=$_offset&limit=$_limit'),
+    );
+
     if (response.statusCode == 200) {
-      final PokemonListResponse data =
-          PokemonListResponse.fromJson(jsonDecode(response.body));
-      return data.results;
+      final data = PokemonListResponse.fromJson(jsonDecode(response.body));
+
+      setState(() {
+        _pokemons.addAll(data.results); // เพิ่มข้อมูลใหม่เข้าในลิสต์
+        _offset += _limit; // ปรับค่า offset สำหรับโหลดครั้งถัดไป
+        _hasMore =
+            data.results.isNotEmpty; // ถ้าข้อมูลหมดแล้วจะหยุดการโหลดเพิ่ม
+        _isLoadingMore = false;
+      });
     } else {
-      throw Exception('Failed to load Pokemon');
+      setState(() {
+        _isLoadingMore = false;
+      });
+      throw Exception('Failed to load Pokémon');
     }
+  }
+
+  // ฟังก์ชันเพื่อดึง ID จาก URL
+  String getPokemonId(String url) {
+    final uriParts = url.split('/');
+    return uriParts[uriParts.length - 2];
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<PokemonListItem>>(
-        future: _list,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          } else if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
-          } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(child: Text('No Pokemon found'));
+    return ListView.builder(
+      itemCount: _pokemons.length + 1, // เพิ่ม 1 สำหรับปุ่ม "โหลดเพิ่ม"
+      itemBuilder: (context, index) {
+        if (index == _pokemons.length) {
+          // ปุ่มสำหรับโหลดข้อมูลเพิ่ม
+          if (_hasMore) {
+            return Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: ElevatedButton(
+                onPressed: _isLoadingMore ? null : loadData,
+                child: _isLoadingMore
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : const Text('Load More Pokémon'),
+              ),
+            );
           } else {
-            final List<PokemonListItem> response =
-                snapshot.data as List<PokemonListItem>;
-
-            return ListView.builder(
-              itemCount: response.length,
-              itemBuilder: (context, index) {
-                final PokemonListItem pokemon = response[index];
-                return ListTile(
-                    title: Text(pokemon.name),
-                    onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => PokemondetailView(
-                              pokemonListItem: pokemon,
-                            ),
-                          ),
-                        ));
-              },
+            return const Padding(
+              padding: EdgeInsets.all(16.0),
+              child: Center(child: Text('No more Pokémon to load')),
             );
           }
-        });
+        }
+
+        final pokemon = _pokemons[index];
+        final pokemonId = getPokemonId(pokemon.url);
+        final imageUrl =
+            'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/$pokemonId.png';
+
+        return ListTile(
+          leading: Image.network(
+            imageUrl,
+            width: 100,
+            height: 100,
+            errorBuilder: (context, error, stackTrace) =>
+                const Icon(Icons.error),
+          ),
+          title: Text(
+            pokemon.name[0].toUpperCase() + pokemon.name.substring(1),
+            style: const TextStyle(fontSize: 18),
+          ),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => PokemondetailView(pokemonListItem: pokemon),
+            ),
+          ),
+        );
+      },
+    );
   }
 }
